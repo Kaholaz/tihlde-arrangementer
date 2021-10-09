@@ -10,5 +10,5 @@ Nyeste gecko-driver kan lastes ned her: https://github.com/mozilla/geckodriver/r
 
 # How to run?
 For å kjøre programmet må du lage en discord bot og finne bot-token-et. Dette må lagres i en .env fil der det står `BOT_TOKEN=%din bot-token%`. 
-Man må også pesifisere banen til gecko-driveren.
+Man må også spesifisere banen til gecko-driveren.
 Etter dette kan programmet kjøres ved å skrive `python Main.py`
