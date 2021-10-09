@@ -127,6 +127,7 @@ class Event:
 
     @classmethod
     def parse_datetime(cls, datetime_str: str) -> str:
+        """Gets the datetime of a formatted date in the event and returns a iso-formatted datetime string"""
         pattern = r"\w+\. (?P<day>\d+) (?P<month>\w+)\s?(?P<year>\d+)?( - kl. (?P<hours>\d+):(?P<minutes>\d+))?"
         result = re.search(
             pattern,
@@ -150,6 +151,7 @@ class Event:
             return datetime.datetime(year, month, day).isoformat()
 
     def to_dict(self) -> dict:
+        """Returns a dict representation of an event"""
         return {
             "id": self.id,
             "name": self.name,

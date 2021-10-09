@@ -98,6 +98,11 @@ class EventRecord:
     def get_newly_opened_events(
         old: "EventRecord", new: "EventRecord"
     ) -> "EventRecord":
+        """
+        Compares old and new and returnes a new EventRecord
+        containing the events where the events changed to "ACTIVE"
+        or the events are new and tagged as "ACTIVE"
+        """
 
         shared_ids = EventRecord.shared_ids(old, new)
 
@@ -114,6 +119,10 @@ class EventRecord:
 
     @staticmethod
     def combine(old: "EventRecord", new: "EventRecord") -> "EventRecord":
+        """
+        Returns an updated EventRecord. Using an old EventRecord and a new EventRecord.
+        All the events in old not in new is changed to expired and all the events in new is returned "as-is"
+        """
         shared_ids = EventRecord.shared_ids(old, new)
         debug = old.debug or new.debug
 
