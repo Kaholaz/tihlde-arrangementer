@@ -15,6 +15,7 @@ from config import (
     END_USER_PATH,
 )
 
+
 class Client(discord.Client):
     """
     Inherrits discord.Client and adds special methods.
@@ -62,6 +63,7 @@ class Client(discord.Client):
         """
         if user not in self.end_users:
             self.end_users.append(user)
+            logging.info(f"User '{user}' added.")
             asyncio.create_task(self.save_end_users(path))
 
     async def remove_end_user(self, path: str, user: discord.User) -> None:
@@ -70,6 +72,7 @@ class Client(discord.Client):
         """
         if user in self.end_users:
             self.end_users.remove(user)
+            logging.info(f"User '{user}' removed.")
             asyncio.create_task(self.save_end_users(path))
 
     async def save_end_users(self, path: str) -> None:
