@@ -1,11 +1,19 @@
 import asyncio
+import logging
+import discord
+import time
+import concurrent.futures
+
 from EventRecord import EventRecord
 import json
-from config import DATA_PATH, QUERY_INTERVAL, SITE_PATH, END_USER_PATH
-import discord
-import threading
-import time
-
+from config import (
+    API_ENDPOINT,
+    DATA_PATH,
+    LOG_FILE_PATH,
+    QUERY_INTERVAL,
+    SITE_PATH,
+    END_USER_PATH,
+)
 
 class Client(discord.Client):
     """
@@ -18,12 +26,16 @@ class Client(discord.Client):
         """
         while True:
             t0 = time.time()
-            new_events = EventRecord()
-            thread = threading.Thread(target=update, args=[new_events])
-            thread.start()
-            while thread.is_alive():
-                await asyncio.sleep(2)
-            await client.notify_users(new_events)
+            with concurrent.futures.ThreadPoolExecutor() as ex:
+                future: concurrent.futures.Future = ex.submit(update)
+            newly_opened, new_events = future.result()
+            logging.info(
+                f"Newly opened events: {list(newly_opened.eventrecord.keys())}"
+            )
+            logging.info(f"New events: {list(new_events.eventrecord.keys())}")
+
+            await client.notify_users_new(new_events)
+            await client.notify_users_newly_opened(newly_opened)
             await asyncio.sleep(QUERY_INTERVAL - (time.time() - t0))
 
     async def load_end_users(self, path: str) -> set[int]:
@@ -41,6 +53,8 @@ class Client(discord.Client):
                     self.end_users.append(user)
         except FileNotFoundError:
             self.end_users: list[discord.User] = list()
+
+        logging.info(f"Loaded {len(self.end_users)} end users")
 
     async def append_end_user(self, path: str, user: discord.User):
         """
@@ -66,14 +80,36 @@ class Client(discord.Client):
         with open(path, "w") as f:
             json.dump(users, f)
 
-    async def notify_users(self, new_events: EventRecord):
+    async def notify_users_new(self, new_events: EventRecord):
         """
-        Sends a message to every registered user with new events.
+        Notifies users of new events
+        """
+        for event in new_events.eventrecord.values():
+            if event.status == "CLOSED":
+                message = f"Nytt arrangement lagt ut ({event.title}): {SITE_PATH}{event.id}/\nPåmeldingen starter {event.signup_start}."
+            elif event.status == "ACTIVE":
+                message = f"Nytt arrangement åpnet påmelding ({event.title}): {SITE_PATH}{event.id}/"
+            elif event.status == "TBA":
+                message = f"Nytt arrangement lagt ut ({event.title}): {SITE_PATH}{event.id}/\nDetaljene er ennå ikke annonsert."
+            elif event.status == "NO_SIGNUP":
+                message = f"Nytt arrangement lagt ut ({event.title}): {SITE_PATH}{event.id}/\nArrangementet krever ikke påmelding."
+            for user in self.end_users:
+                logging.debug(
+                    f"Messaged user {user} about newly added {event.status} event"
+                )
+                await user.send(message)
+
+    async def notify_users_newly_opened(self, new_events: EventRecord):
+        """
+        Sends a message to every registered user with newly opened events.
         """
         for user in self.end_users:
             for event in new_events.eventrecord.values():
+                logging.debug(
+                    f"Messaged user {user} about newly opened {event.status} event"
+                )
                 await user.send(
-                    f"Nytt event åpnet påmelding ({event.name}): {SITE_PATH}{event.id}/"
+                    f"Nytt event åpnet påmelding ({event.title}): {SITE_PATH}{event.id}/"
                 )
 
 
@@ -84,7 +120,7 @@ client = Client()
 @client.event
 async def on_ready():
     await client.load_end_users(END_USER_PATH)
-    print(f"Logged in as {client.user}")
+    logging.info(f"Logged in as {client.user}")
     asyncio.create_task(client.main_loop())
 
 
@@ -94,15 +130,18 @@ async def on_message(message: discord.Message):
         return
 
     # adds user if user writtes start, and removes user if user writes slutt.
+    logging.debug(f"Recived message from {message.author}")
     if message.content == "start":
+        logging.debug(f"Recived 'start' from {message.author}")
         await client.append_end_user(END_USER_PATH, message.author)
         await message.reply("Bruker lagt til")
     elif message.content == "slutt":
+        logging.debug(f"Recived 'slutt' from {message.author}")
         await client.remove_end_user(END_USER_PATH, message.author)
         await message.reply("Bruker fjernet")
 
 
-def update(result: EventRecord):
+def update():
     """
     Checks for new events and saves an updated register to file.
     The method mutates result instead of giving a return value.
@@ -110,14 +149,15 @@ def update(result: EventRecord):
     """
     old = EventRecord.from_json(DATA_PATH)
 
-    new = EventRecord.from_url(SITE_PATH)
-
-    newly_opened = EventRecord.get_newly_opened_events(old, new)
-
-    for event in newly_opened.eventrecord.values():
-        result.add_event(event)
+    new = EventRecord.get_updated(API_ENDPOINT)
 
     EventRecord.combine(old, new).save_to_json(DATA_PATH)
+
+    newly_opened = EventRecord.get_newly_opened_events(old, new)
+    new_events = EventRecord.get_new_events(old, new)
+
+    logging.info("Fetched update")
+    return newly_opened, new_events
 
 
 if __name__ == "__main__":
@@ -126,6 +166,13 @@ if __name__ == "__main__":
 
     load_dotenv()
 
+    logging.basicConfig(
+        format="%(asctime)s.%(msecs)03d [%(levelname)s]%(module)s.%(funcName)s:%(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+        level=logging.INFO,
+        filename=LOG_FILE_PATH,
+        encoding="utf8",
+    )
     BOT_TOKEN = environ["BOT_TOKEN"]
     client.run(BOT_TOKEN)
     asyncio.create_task(client.main_loop())
