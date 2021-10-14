@@ -131,7 +131,7 @@ class EventRecord:
             ):
                 newly_opened.add_event(new.get_event(id).copy())
 
-        logging.info(f"Found {len(newly_opened)} newly opened events")
+        logging.debug(f"Found {len(newly_opened)} newly opened events")
         return newly_opened
 
     @classmethod
@@ -149,7 +149,7 @@ class EventRecord:
         for id in new_ids:
             result.add_event(new.get_event(id).copy())
 
-        logging.info(f"Found {len(result)} new events")
+        logging.debug(f"Found {len(result)} new events")
         return result
 
     @classmethod
