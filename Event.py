@@ -2,6 +2,8 @@ import datetime
 from typing import Literal
 import requests
 import logging
+from time import sleep
+
 from HelperFunctions import check_status_code
 from config import API_ENDPOINT
 
@@ -50,6 +52,7 @@ class Event:
         logging.debug(f"Convertet event with id: {self.id}, to dict")
         result_json = self.__dict__.copy()
         for key, value in result_json.items():
+            # Converts all date fields to a string representation
             if type(value) == datetime.datetime:
                 result_json[key] = value.isoformat()
         return result_json
@@ -61,9 +64,14 @@ class Event:
             logging.warning(
                 f"The request to {r.url} did not return with a response code starting with 2"
             )
+            # Retrying
+            sleep(0.5)
             return Event(id)
 
         event_json = r.json()
+
+        # Bad response
+        # Event(id) creates an event where id is the value of id and all other fields are set to None
         if len(r.json()) == 1:
             logging.warning(f"The request to {r.url} had a response with length 1")
             return Event(id)
@@ -86,12 +94,15 @@ class Event:
                 status = "TBA"
             else:
                 status = "NO_SIGNUP"
+
+        # Bad JSON
         except KeyError as e:
             logging.warning(
                 f"Something was from with the json returned from the request. KeyError: '{e}'"
             )
             return Event(id)
 
+        # Creating new event with the fetched parameters
         event = Event(
             id=id,
             title=title,
@@ -111,19 +122,23 @@ class Event:
 
     def __repr__(self):
         logging.debug(f"Returned string representation of event with id: {self.id}")
-        return (
-            f"{type(self).__name__}("
-            f"id={self.id}, "
-            f"title={self.title}, "
-            f"start={self.start.isoformat()}, "
-            f"end={self.end.isoformat()}, "
-            f"deadline={self.deadline.isoformat()}, "
-            f"signup_start={self.signup_start.isoformat()}, "
-            f"place={self.place}, "
-            f"status={self.status})"
-        )
+
+        # Copies dict to no make changes to the object (mutable)
+        result_dict = self.__dict__.copy()
+
+        # Datetimes converted into equivalent iso-formatted strings
+        for key, value in result_dict.items():
+            if type(value) == datetime.datetime:
+                result_dict[key] = value.isoformat()
+
+        # Formatted as you would call the function
+        return f"{type(self).__name__}({', '.join(f'{key}={value}' for key, value in result_dict.items())})"
 
 
 if __name__ == "__main__":
-    logging.basicConfig(filename="test.log", level=logging.DEBUG)
-    print(Event.get_event(277))
+    # Troubleshooting:
+
+    # logging.basicConfig(filename="test.log", level=logging.DEBUG)
+    # print(Event.get_event(277))
+
+    pass

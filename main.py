@@ -30,10 +30,14 @@ class Client(discord.Client):
             with concurrent.futures.ThreadPoolExecutor() as ex:
                 future: concurrent.futures.Future = ex.submit(update)
             newly_opened, new_events = future.result()
-            logging.info(
-                f"Newly opened events: {list(newly_opened.eventrecord.keys())}"
-            )
-            logging.info(f"New events: {list(new_events.eventrecord.keys())}")
+
+            if len(newly_opened) != 0:
+                logging.info(
+                    f"Newly opened events: {list(newly_opened.eventrecord.keys())}"
+                )
+
+            if len(new_events) != 0:
+                logging.info(f"New events: {list(new_events.eventrecord.keys())}")
 
             await client.notify_users_new(new_events)
             await client.notify_users_newly_opened(newly_opened)
@@ -132,7 +136,7 @@ async def on_message(message: discord.Message):
     if message.author == client.user:
         return
 
-    # adds user if user writtes start, and removes user if user writes slutt.
+    # Adds user if user writtes start, and removes user if user writes slutt.
     logging.debug(f"Recived message from {message.author}")
     if message.content == "start":
         logging.debug(f"Recived 'start' from {message.author}")
@@ -176,6 +180,7 @@ if __name__ == "__main__":
         filename=LOG_FILE_PATH,
         encoding="utf8",
     )
+
     BOT_TOKEN = environ["BOT_TOKEN"]
     client.run(BOT_TOKEN)
     asyncio.create_task(client.main_loop())

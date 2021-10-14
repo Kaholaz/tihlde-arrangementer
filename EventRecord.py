@@ -1,4 +1,5 @@
 import logging
+from time import sleep
 import requests
 from Event import Event
 from HelperFunctions import check_status_code
@@ -50,21 +51,28 @@ class EventRecord:
         Gets an updated record of all events from the api endpoint
         """
         r = requests.get(api_endpoint)
+
+        # Bad response
         if not check_status_code(r):
             logging.warning(
                 f"The request to {r.url} did not return with a response code starting with 2"
             )
+            # Retying
+            sleep(0.5)
             return cls.get_updated()
 
         result = cls()
         try:
             results: dict[str, any] = r.json()["results"]
             event_ids: list[int] = [event["id"] for event in results]
+
+            # Gets every event for every event_id concurrently
             with concurrent.futures.ThreadPoolExecutor() as ex:
-                threads = [ex.submit(Event.get_event, (id)) for id in event_ids]
-                result.eventrecord = {
-                    thread.result().id: thread.result() for thread in threads
-                }
+                events = ex.map(Event.get_event, event_ids)
+
+            result.eventrecord = {event.id: event for event in events}
+
+        # Bad JSON
         except KeyError as e:
             logging.critical(
                 f"Something was from with the json returned from the request. KeyError: '{e}'"
@@ -96,7 +104,7 @@ class EventRecord:
         eventrecord1: "EventRecord", eventrecord2: "EventRecord"
     ) -> set[int]:
         """
-        Gets the ids that are comon between two EventRecord objects
+        Gets the ids that are comon between two `EventRecord` instances
         """
         return set(eventrecord1.eventrecord.keys()) & set(
             eventrecord2.eventrecord.keys()
@@ -107,15 +115,16 @@ class EventRecord:
         cls, old: "EventRecord", new: "EventRecord"
     ) -> "EventRecord":
         """
-        Compares old and new and returnes a new EventRecord
+        Compares old and new and returnes a new `EventRecord`
         containing the events where events in old changed to
-        "ACTIVE in new.
+        "ACTIVE" in new.
         """
 
         shared_ids = cls.shared_ids(old, new)
 
         newly_opened = cls()
         for id in shared_ids:
+            # If the event switched from anything but "ACTIVE" to "ACTIVE"
             if (
                 old.get_event(id).status != "ACTIVE"
                 and new.get_event(id).status == "ACTIVE"
@@ -128,12 +137,14 @@ class EventRecord:
     @classmethod
     def get_new_events(cls, old: "EventRecord", new: "EventRecord") -> "EventRecord":
         """
-        Returns a new EventRecord that contains all the events
+        Returns a new `EventRecord` that contains all the events
         that are unique to new.
         """
         shared_ids = cls.shared_ids(old, new)
 
         result = cls()
+
+        # All ids in new, but not in old
         new_ids = [id for id in new.eventrecord.keys() if id not in shared_ids]
         for id in new_ids:
             result.add_event(new.get_event(id).copy())
@@ -144,38 +155,46 @@ class EventRecord:
     @classmethod
     def combine(cls, old: "EventRecord", new: "EventRecord") -> "EventRecord":
         """
-        Returns an updated EventRecord. Using an old EventRecord and a new EventRecord.
+        Returns an updated EventRecord. Using an old `EventRecord` and a new `EventRecord`.
         All the events in old not in new is changed to expired and all the events in new is returned "as-is"
         """
         shared_ids = cls.shared_ids(old, new)
 
         combined = cls()
+
+        # All events in old that are not in new, gets set to "EXPIRED"
         for id in old.eventrecord.keys():
             if id not in shared_ids:
                 event = old.get_event(id).copy()
                 event.status = "EXPIRED"
                 combined.add_event(event)
+
+        # All events in new added as is
         for event in new.eventrecord.values():
             combined.add_event(event.copy())
+
         return combined
 
 
 if __name__ == "__main__":
+    # Troubleshooting:
+
     # e = EventRecord.get_updated(API_ENDPOINT)
     # e.save_to_json(TEST_DATA_PATH)
     # e = EventRecord.from_json(TEST_DATA_PATH)
     # print(e)
 
-    old = EventRecord.from_json(TEST_DATA_PATH)
-    print("\nOld:")
-    print(old)
-    new = EventRecord.get_updated(API_ENDPOINT)
-    print("\nNew:")
-    print(new)
-    print("\nNew events:")
-    print(EventRecord.get_new_events(old, new))
-    print("\nNewly opened:")
-    print(EventRecord.get_newly_opened_events(old, new))
-    print("\nCombined:")
-    print(EventRecord.combine(old, new))
+    # old = EventRecord.from_json(TEST_DATA_PATH)
+    # print("\nOld:")
+    # print(old)
+    # new = EventRecord.get_updated(API_ENDPOINT)
+    # print("\nNew:")
+    # print(new)
+    # print("\nNew events:")
+    # print(EventRecord.get_new_events(old, new))
+    # print("\nNewly opened:")
+    # print(EventRecord.get_newly_opened_events(old, new))
+    # print("\nCombined:")
+    # print(EventRecord.combine(old, new))
+
     pass
