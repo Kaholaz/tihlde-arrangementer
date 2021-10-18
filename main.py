@@ -8,7 +8,6 @@ import json
 
 from EventRecord import EventRecord
 from config import (
-    API_ENDPOINT,
     DATA_PATH,
     LOG_FILE_PATH,
     QUERY_INTERVAL,
@@ -150,15 +149,15 @@ async def on_message(message: discord.Message):
         await message.reply("Bruker fjernet")
 
 
-def update():
+async def update():
     """
     Checks for new events and saves an updated register to file.
     The method mutates result instead of giving a return value.
     This is because the method is designed to be run with the threading module.
     """
-    old = EventRecord.from_json(DATA_PATH)
+    old = await EventRecord.from_json(DATA_PATH)
 
-    new = EventRecord.get_updated(API_ENDPOINT)
+    new = await EventRecord.get_updated()
 
     EventRecord.combine(old, new).save_to_json(DATA_PATH)
 
