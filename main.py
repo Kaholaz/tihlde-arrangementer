@@ -159,7 +159,7 @@ async def update():
 
     new = await EventRecord.get_updated()
 
-    EventRecord.combine(old, new).save_to_json(DATA_PATH)
+    await EventRecord.combine(old, new).save_to_json(DATA_PATH)
 
     newly_opened = EventRecord.get_newly_opened_events(old, new)
     new_events = EventRecord.get_new_events(old, new)
