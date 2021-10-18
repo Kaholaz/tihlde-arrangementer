@@ -1,11 +1,12 @@
 import asyncio
 import logging
+import sys
+import aiofiles
 import discord
 import time
-import concurrent.futures
+import json
 
 from EventRecord import EventRecord
-import json
 from config import (
     API_ENDPOINT,
     DATA_PATH,
@@ -27,9 +28,7 @@ class Client(discord.Client):
         """
         while True:
             t0 = time.time()
-            with concurrent.futures.ThreadPoolExecutor() as ex:
-                future: concurrent.futures.Future = ex.submit(update)
-            newly_opened, new_events = future.result()
+            newly_opened, new_events = await update()
 
             if len(newly_opened) != 0:
                 logging.info(
@@ -84,8 +83,8 @@ class Client(discord.Client):
         Saves the user regisrer to a given path as a list of user ids.
         """
         users = [user.id for user in self.end_users]
-        with open(path, "w") as f:
-            json.dump(users, f)
+        async with aiofiles.open(path, "w") as f:
+            f.write(json.dumps(users))
 
     async def notify_users_new(self, new_events: EventRecord):
         """
@@ -97,7 +96,10 @@ class Client(discord.Client):
             elif event.status == "ACTIVE":
                 message = f"Nytt arrangement åpnet påmelding ({event.title}): {SITE_PATH}{event.id}/"
             elif event.status == "TBA":
-                message = f"Nytt arrangement lagt ut ({event.title}): {SITE_PATH}{event.id}/\nDetaljene er ennå ikke annonsert."
+                message = (
+                    f"Nytt arrangement lagt ut ({event.title}): {SITE_PATH}{event.id}/\n"
+                    f"Detaljene er ennå ikke annonsert. Påmelding starter angivelig {event.signup_start}"
+                )
             elif event.status == "NO_SIGNUP":
                 message = f"Nytt arrangement lagt ut ({event.title}): {SITE_PATH}{event.id}/\nArrangementet krever ikke påmelding."
             for user in self.end_users:
@@ -171,6 +173,15 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     from os import environ
 
+    # To remove RuntimeError on exit on windows as documented in this issue:
+    # https://github.com/encode/httpx/issues/914
+    if (
+        sys.version_info[0] == 3
+        and sys.version_info[1] >= 8
+        and sys.platform.startswith("win")
+    ):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     load_dotenv()
 
     logging.basicConfig(
@@ -183,4 +194,3 @@ if __name__ == "__main__":
 
     BOT_TOKEN = environ["BOT_TOKEN"]
     client.run(BOT_TOKEN)
-    asyncio.create_task(client.main_loop())

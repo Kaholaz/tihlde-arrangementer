@@ -1,29 +1,15 @@
+import asyncio
 import datetime
+import sys
 from typing import Literal
-import requests
+import aiohttp
 import logging
-from time import sleep
 
-from HelperFunctions import check_status_code
+from HelperFunctions import fetch_json
 from config import API_ENDPOINT
 
 
 class Event:
-    MONTHS = {
-        "jan": 1,
-        "feb": 2,
-        "mars": 3,
-        "april": 4,
-        "mai": 5,
-        "juni": 6,
-        "juli": 7,
-        "aug": 8,
-        "sep": 9,
-        "okt": 10,
-        "nov": 11,
-        "des": 12,
-    }
-
     def __init__(
         self,
         id: int,
@@ -58,22 +44,16 @@ class Event:
         return result_json
 
     @classmethod
-    def get_event(cls, id: int) -> "Event":
-        r = requests.get(f"{API_ENDPOINT}{id}")
-        if not check_status_code(r):
-            logging.warning(
-                f"The request to {r.url} did not return with a response code starting with 2"
-            )
-            # Retrying
-            sleep(0.5)
-            return Event(id)
-
-        event_json = r.json()
+    async def get_event(cls, session: aiohttp.ClientSession, id: int) -> "Event":
+        url = f"{API_ENDPOINT}{id}"
+        event_json = await fetch_json(session, url)
 
         # Bad response
         # Event(id) creates an event where id is the value of id and all other fields are set to None
-        if len(r.json()) == 1:
-            logging.warning(f"The request to {r.url} had a response with length 1")
+        if len(event_json) == 1:
+            logging.warning(
+                f"The request to evnt with url {url} had a response with length 1"
+            )
             return Event(id)
 
         try:
@@ -98,7 +78,7 @@ class Event:
         # Bad JSON
         except KeyError as e:
             logging.warning(
-                f"Something was from with the json returned from the request. KeyError: '{e}'"
+                f"Something was from with the json returned from the request [url: {url}]. KeyError: '{e}'"
             )
             return Event(id)
 
@@ -113,7 +93,7 @@ class Event:
             place=place,
             status=status,
         )
-        logging.debug(f"Event with id {event.id} retrived from {r.url}")
+        logging.debug(f"Event with id {event.id} retrived")
         return event
 
     def copy(self) -> "Event":
@@ -136,9 +116,22 @@ class Event:
 
 
 if __name__ == "__main__":
+    # To remove RuntimeError on exit on windows as documented in this issue:
+    # https://github.com/encode/httpx/issues/914
+    if (
+        sys.version_info[0] == 3
+        and sys.version_info[1] >= 8
+        and sys.platform.startswith("win")
+    ):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     # Troubleshooting:
 
-    # logging.basicConfig(filename="test.log", level=logging.DEBUG)
-    # print(Event.get_event(277))
+    async def main():
+        # async with aiohttp.ClientSession() as session:
+        #     print(await Event.get_event(session, 277))
+        return
 
-    pass
+    # logging.basicConfig(filename="test.log", level=logging.DEBUG)
+
+    asyncio.run(main())
