@@ -1,29 +1,15 @@
+import asyncio
 import datetime
+import sys
 from typing import Literal
-import requests
+import aiohttp
 import logging
-from time import sleep
 
-from HelperFunctions import check_status_code
+from HelperFunctions import fetch_json
 from config import API_ENDPOINT
 
 
 class Event:
-    MONTHS = {
-        "jan": 1,
-        "feb": 2,
-        "mars": 3,
-        "april": 4,
-        "mai": 5,
-        "juni": 6,
-        "juli": 7,
-        "aug": 8,
-        "sep": 9,
-        "okt": 10,
-        "nov": 11,
-        "des": 12,
-    }
-
     def __init__(
         self,
         id: int,
@@ -38,42 +24,48 @@ class Event:
         """
         Creates a new Event given a set of parameters
         """
+
+        # Sets fields to the input values and converts iso-strings to datetime
         self.id = id
         self.title = title
-        self.start = datetime.datetime.fromisoformat(start)
-        self.end = datetime.datetime.fromisoformat(end)
-        self.deadline = datetime.datetime.fromisoformat(deadline)
-        self.signup_start = datetime.datetime.fromisoformat(signup_start)
+        self.start = None if start is None else datetime.datetime.fromisoformat(start)
+        self.end = None if end is None else datetime.datetime.fromisoformat(end)
+        self.deadline = (
+            None if deadline is None else datetime.datetime.fromisoformat(deadline)
+        )
+        self.signup_start = (
+            None
+            if signup_start is None
+            else datetime.datetime.fromisoformat(signup_start)
+        )
         self.place = place
         self.status = status
 
     def to_json(self) -> dict:
         """Returns a dict representation of an event"""
         logging.debug(f"Convertet event with id: {self.id}, to dict")
+
+        # Copies dict so to not make changes to the object (mutable)
         result_json = self.__dict__.copy()
+
+        # Converts all date fields to a string representation
         for key, value in result_json.items():
-            # Converts all date fields to a string representation
             if type(value) == datetime.datetime:
                 result_json[key] = value.isoformat()
+
         return result_json
 
     @classmethod
-    def get_event(cls, id: int) -> "Event":
-        r = requests.get(f"{API_ENDPOINT}{id}")
-        if not check_status_code(r):
-            logging.warning(
-                f"The request to {r.url} did not return with a response code starting with 2"
-            )
-            # Retrying
-            sleep(0.5)
-            return Event(id)
-
-        event_json = r.json()
+    async def get_event(cls, session: aiohttp.ClientSession, id: int) -> "Event":
+        url = f"{API_ENDPOINT}{id}"
+        event_json = await fetch_json(session, url)
 
         # Bad response
         # Event(id) creates an event where id is the value of id and all other fields are set to None
-        if len(r.json()) == 1:
-            logging.warning(f"The request to {r.url} had a response with length 1")
+        if len(event_json) == 1:
+            logging.warning(
+                f"The request to evnt with url {url} had a response with length 1"
+            )
             return Event(id)
 
         try:
@@ -98,7 +90,7 @@ class Event:
         # Bad JSON
         except KeyError as e:
             logging.warning(
-                f"Something was from with the json returned from the request. KeyError: '{e}'"
+                f"Something was from with the json returned from the request [url: {url}]. KeyError: '{e}'"
             )
             return Event(id)
 
@@ -113,32 +105,46 @@ class Event:
             place=place,
             status=status,
         )
-        logging.debug(f"Event with id {event.id} retrived from {r.url}")
+        logging.debug(f"Event with id {event.id} retrived")
         return event
 
     def copy(self) -> "Event":
+        """Returns a copy of the instance of `Event`"""
         logging.debug(f"Copied event with id: {self.id}")
         return self.__class__(**self.to_json())
+
+    def __eq__(self, other: "Event"):
+        return all(
+            self.__dict__[key] == other.__dict__[key] for key in self.__dict__.keys()
+        )
 
     def __repr__(self):
         logging.debug(f"Returned string representation of event with id: {self.id}")
 
-        # Copies dict to no make changes to the object (mutable)
-        result_dict = self.__dict__.copy()
-
-        # Datetimes converted into equivalent iso-formatted strings
-        for key, value in result_dict.items():
-            if type(value) == datetime.datetime:
-                result_dict[key] = value.isoformat()
+        # Gets the json repr of the class (all strings instead of datetime fields)
+        dic = self.to_json()
 
         # Formatted as you would call the function
-        return f"{type(self).__name__}({', '.join(f'{key}={value}' for key, value in result_dict.items())})"
+        return f"{type(self).__name__}({', '.join(f'{key}={value}' for key, value in dic.items())})"
 
 
 if __name__ == "__main__":
+    # To remove RuntimeError on exit on windows as documented in this issue:
+    # https://github.com/encode/httpx/issues/914
+    if (
+        sys.version_info[0] == 3
+        and sys.version_info[1] >= 8
+        and sys.platform.startswith("win")
+    ):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     # Troubleshooting:
 
-    # logging.basicConfig(filename="test.log", level=logging.DEBUG)
-    # print(Event.get_event(277))
+    async def main():
+        # async with aiohttp.ClientSession() as session:
+        #     print(await Event.get_event(session, 277))
+        return
 
-    pass
+    # logging.basicConfig(filename="test.log", level=logging.DEBUG)
+
+    asyncio.run(main())

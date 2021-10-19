@@ -1,11 +1,13 @@
+import asyncio
 import logging
-from time import sleep
-import requests
-from Event import Event
-from HelperFunctions import check_status_code
+import sys
+import aiohttp
 import json
-import concurrent.futures
-from config import API_ENDPOINT, TEST_DATA_PATH
+import aiofiles
+
+from config import API_ENDPOINT
+from Event import Event
+from HelperFunctions import fetch_json
 
 
 class EventRecord:
@@ -18,14 +20,14 @@ class EventRecord:
         """
         self.eventrecord: dict[int, Event] = dict()
 
-    def save_to_json(self, path: str) -> None:
+    async def save_to_json(self, path: str) -> None:
         """
         Saves the eventrecord as a list of events to a given path
         """
 
         data = [event.to_json() for event in self.eventrecord.values()]
-        with open(path, mode="w", encoding="utf8") as f:
-            json.dump(data, f, ensure_ascii=False)
+        async with aiofiles.open(path, mode="w", encoding="utf8") as f:
+            await f.write(json.dumps(data, ensure_ascii=False))
 
     def add_event(self, event: Event):
         """
@@ -40,49 +42,53 @@ class EventRecord:
         return self.eventrecord[id]
 
     def __str__(self):
+        """
+        Returns a string repr of the instanse for mated as the string repr
+        of each event separated by newline
+        """
         return "\n".join(str(event) for event in self.eventrecord.values())
 
     def __len__(self):
+        """Returns the number of events held in the eventrecord"""
         return len(self.eventrecord)
 
     @classmethod
-    def get_updated(cls, api_endpoint):
+    async def get_updated(cls):
         """
         Gets an updated record of all events from the api endpoint
         """
-        r = requests.get(api_endpoint)
+        url = API_ENDPOINT
 
-        # Bad response
-        if not check_status_code(r):
-            logging.warning(
-                f"The request to {r.url} did not return with a response code starting with 2"
-            )
-            # Retying
-            sleep(0.5)
-            return cls.get_updated()
+        async with aiohttp.ClientSession() as session:
 
-        result = cls()
-        try:
-            results: dict[str, any] = r.json()["results"]
-            event_ids: list[int] = [event["id"] for event in results]
+            # Gets all the events from the api
+            events_json = await fetch_json(session, url)
 
-            # Gets every event for every event_id concurrently
-            with concurrent.futures.ThreadPoolExecutor() as ex:
-                events = ex.map(Event.get_event, event_ids)
+            result = cls()
+            # Tries to retrive the ids of the events and then finds each event
+            # given the id.
+            try:
+                results: dict[str, any] = events_json["results"]
+                event_ids: list[int] = [event["id"] for event in results]
 
-            result.eventrecord = {event.id: event for event in events}
+                # Gets every event for every event_id async
+                events = await asyncio.gather(
+                    *(Event.get_event(session, event_id) for event_id in event_ids)
+                )
+                result.eventrecord = {event.id: event for event in events}
 
-        # Bad JSON
-        except KeyError as e:
-            logging.critical(
-                f"Something was from with the json returned from the request. KeyError: '{e}'"
-            )
-            raise e
+            # Bad JSON
+            except KeyError as e:
+                logging.critical(
+                    f"Something was from with the json returned from the "
+                    f"request [url: {url}]. KeyError: '{e}'"
+                )
+                raise e
 
         return result
 
     @classmethod
-    def from_json(cls, path: str) -> None:
+    async def from_json(cls, path: str) -> None:
         """
         Creates a new EventRecord given a path to a json.
         The json should be a list of json-representations of events.
@@ -90,10 +96,17 @@ class EventRecord:
         result = cls()
 
         try:
-            with open(path, mode="r", encoding="utf8") as f:
-                data = json.load(f)
+            # Gets a list of JSON represented events.
+            async with aiofiles.open(path, mode="r", encoding="utf8") as f:
+                raw = await f.read()
+            data = json.loads(raw)
+
+            # Unpacks the kwargs from the json.
             for entry in data:
                 result.add_event(Event(**entry))
+
+        # The resulting EventRecord stays empty if file is not found
+        # (empty EventRecord is then returned)
         except FileNotFoundError:
             logging.warning(f"File not found: {path}")
 
@@ -104,8 +117,10 @@ class EventRecord:
         eventrecord1: "EventRecord", eventrecord2: "EventRecord"
     ) -> set[int]:
         """
-        Gets the ids that are comon between two `EventRecord` instances
+        Gets the ids that are common between two `EventRecord` instances
         """
+
+        # Returns the intersection between the id in each EventRecord
         return set(eventrecord1.eventrecord.keys()) & set(
             eventrecord2.eventrecord.keys()
         )
@@ -122,6 +137,7 @@ class EventRecord:
 
         shared_ids = cls.shared_ids(old, new)
 
+        # Checks common ids for changes
         newly_opened = cls()
         for id in shared_ids:
             # If the event switched from anything but "ACTIVE" to "ACTIVE"
@@ -144,7 +160,7 @@ class EventRecord:
 
         result = cls()
 
-        # All ids in new, but not in old
+        # All ids in new, but not in old (unique to new)
         new_ids = [id for id in new.eventrecord.keys() if id not in shared_ids]
         for id in new_ids:
             result.add_event(new.get_event(id).copy())
@@ -169,7 +185,7 @@ class EventRecord:
                 event.status = "EXPIRED"
                 combined.add_event(event)
 
-        # All events in new added as is
+        # All events in new added as-is
         for event in new.eventrecord.values():
             combined.add_event(event.copy())
 
@@ -177,17 +193,27 @@ class EventRecord:
 
 
 if __name__ == "__main__":
-    # Troubleshooting:
+    # To remove RuntimeError on exit on windows as documented in this issue:
+    # https://github.com/encode/httpx/issues/914
+    if (
+        sys.version_info[0] == 3
+        and sys.version_info[1] >= 8
+        and sys.platform.startswith("win")
+    ):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    # e = EventRecord.get_updated(API_ENDPOINT)
-    # e.save_to_json(TEST_DATA_PATH)
-    # e = EventRecord.from_json(TEST_DATA_PATH)
+    # Troubleshooting:
+    from config import TEST_DATA_PATH
+
+    # e = asyncio.run(EventRecord.get_updated())
+    # asyncio.run(e.save_to_json(TEST_DATA_PATH))
+    # e = asyncio.run(EventRecord.from_json(TEST_DATA_PATH))
     # print(e)
 
-    # old = EventRecord.from_json(TEST_DATA_PATH)
+    # old = asyncio.run(EventRecord.from_json(TEST_DATA_PATH))
     # print("\nOld:")
     # print(old)
-    # new = EventRecord.get_updated(API_ENDPOINT)
+    # new = asyncio.run(EventRecord.get_updated())
     # print("\nNew:")
     # print(new)
     # print("\nNew events:")

@@ -1,19 +1,21 @@
 import logging
-from requests.models import Response
+import aiohttp
+import asyncio
 
 
-def check_status_code(r: Response) -> bool:
+async def fetch_json(
+    session: aiohttp.ClientSession, url: str
+) -> aiohttp.ClientResponse:
     """
-    Checks status code of a response. Returns `True` if the response
-    had a status-code starting with 200, `False` if not.
+    Retrives a json from a an api given the url
     """
-    if 200 <= r.status_code and r.status_code < 300:
-        logging.debug(
-            f"Request to {r.url} returned with status code {r.status_code} <{r.reason}>"
-        )
-        return True
-    else:
-        logging.warning(
-            f"Request to {r.url} returned with status code {r.status_code} <{r.reason}>"
-        )
-        return False
+    async with session.get(url) as r:
+        if r.status != 200:
+            logging.warning(
+                f"The request to {r.url} did not return with a response code for OK [200]"
+            )
+            # Retrying
+            await asyncio.sleep(0.5)
+            return await fetch_json(session, id)
+        else:
+            return await r.json()

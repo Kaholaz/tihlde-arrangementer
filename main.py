@@ -1,13 +1,13 @@
 import asyncio
 import logging
+import sys
+import aiofiles
 import discord
 import time
-import concurrent.futures
+import json
 
 from EventRecord import EventRecord
-import json
 from config import (
-    API_ENDPOINT,
     DATA_PATH,
     LOG_FILE_PATH,
     QUERY_INTERVAL,
@@ -25,23 +25,62 @@ class Client(discord.Client):
         """
         The main loop of the program. Checks for updates in events in the interval specified by QUERY_INTERVAL
         """
-        while True:
-            t0 = time.time()
-            with concurrent.futures.ThreadPoolExecutor() as ex:
-                future: concurrent.futures.Future = ex.submit(update)
-            newly_opened, new_events = future.result()
 
+        self.everyone_notified: bool = True
+
+        while True:
+            # Updates the records if everyone is up to speed with the current updates
+            if self.everyone_notified:
+                t0 = time.time()
+                newly_opened, new_events = await self.update()
+
+            # Self.everyone_notified gets set to False if new events are discovered
             if len(newly_opened) != 0:
+                self.everyone_notified = False
                 logging.info(
                     f"Newly opened events: {list(newly_opened.eventrecord.keys())}"
                 )
 
             if len(new_events) != 0:
+                self.everyone_notified = False
                 logging.info(f"New events: {list(new_events.eventrecord.keys())}")
 
-            await client.notify_users_new(new_events)
-            await client.notify_users_newly_opened(newly_opened)
-            await asyncio.sleep(QUERY_INTERVAL - (time.time() - t0))
+            # Notifies users if everyone is not up to speed
+            if not self.everyone_notified:
+                result_new = await client.notify_users_new(new_events)
+                result_newly_opened = await client.notify_users_newly_opened(
+                    newly_opened
+                )
+
+                # Sets self.everyone_notified to True if both functions ran without issue
+                self.everyone_notified = result_new and result_newly_opened
+
+            if self.everyone_notified:
+                await asyncio.sleep(QUERY_INTERVAL - (time.time() - t0))
+            else:
+                # Waits 500ms before retrying
+                await asyncio.time.sleep(0.5)
+
+    async def update(self):
+        """
+        Checks for new events and saves an updated register to file.
+        The method mutates result instead of giving a return value.
+        This is because the method is designed to be run with the threading module.
+
+        Returns a tuple with EventRecord where the first entry is newly opened events
+        and the second entry is new events
+        """
+        old = await EventRecord.from_json(DATA_PATH)
+
+        new = await EventRecord.get_updated()
+
+        newly_opened = EventRecord.get_newly_opened_events(old, new)
+        new_events = EventRecord.get_new_events(old, new)
+
+        await EventRecord.combine(old, new).save_to_json(DATA_PATH)
+
+        logging.info("Fetched update")
+        return newly_opened, new_events
 
     async def load_end_users(self, path: str) -> set[int]:
         """
@@ -84,40 +123,83 @@ class Client(discord.Client):
         Saves the user regisrer to a given path as a list of user ids.
         """
         users = [user.id for user in self.end_users]
-        with open(path, "w") as f:
-            json.dump(users, f)
+        async with aiofiles.open(path, "w") as f:
+            f.write(json.dumps(users))
 
-    async def notify_users_new(self, new_events: EventRecord):
+    async def notify_users_new(self, new_events: EventRecord) -> bool:
         """
-        Notifies users of new events
+        Notifies users of new events. Returns True if successfull and False if not.
         """
         for event in new_events.eventrecord.values():
+
+            # Sets message according to event status
             if event.status == "CLOSED":
-                message = f"Nytt arrangement lagt ut ({event.title}): {SITE_PATH}{event.id}/\nPåmeldingen starter {event.signup_start}."
+                message = (
+                    f"Nytt arrangement lagt ut ({event.title}): {SITE_PATH}{event.id}/\n"
+                    f"Påmeldingen starter {event.signup_start}."
+                )
             elif event.status == "ACTIVE":
                 message = f"Nytt arrangement åpnet påmelding ({event.title}): {SITE_PATH}{event.id}/"
             elif event.status == "TBA":
-                message = f"Nytt arrangement lagt ut ({event.title}): {SITE_PATH}{event.id}/\nDetaljene er ennå ikke annonsert."
+                message = (
+                    f"Nytt arrangement lagt ut ({event.title}): {SITE_PATH}{event.id}/\n"
+                    f"Detaljene er ennå ikke annonsert. Påmelding starter angivelig {event.signup_start}"
+                )
             elif event.status == "NO_SIGNUP":
-                message = f"Nytt arrangement lagt ut ({event.title}): {SITE_PATH}{event.id}/\nArrangementet krever ikke påmelding."
+                message = (
+                    f"Nytt arrangement lagt ut ({event.title}): {SITE_PATH}{event.id}/\n"
+                    f"Arrangementet krever ikke påmelding."
+                )
+            # Continues loop if event status does not match anything to avoid endless
+            # loops due to errors because of messange not beeing defined.
+            else:
+                logging.warning(
+                    f"Event with id {event.id} does not have a valid status [status: '{event.status}']"
+                )
+                continue
+
+            # Sends the message to each registered user
             for user in self.end_users:
+                try:
+                    await user.send(message)
+
+                # Something went wrong
+                except Exception as e:
+                    logging.warning(
+                        f"Somethng unexpected happened while notifying users of newly opened events: '{e}'"
+                    )
+                    return False
+
                 logging.debug(
                     f"Messaged user {user} about newly added {event.status} event"
                 )
-                await user.send(message)
 
-    async def notify_users_newly_opened(self, new_events: EventRecord):
+        return True
+
+    async def notify_users_newly_opened(self, new_events: EventRecord) -> bool:
         """
         Sends a message to every registered user with newly opened events.
         """
         for user in self.end_users:
             for event in new_events.eventrecord.values():
+                try:
+                    await user.send(
+                        f"Nytt event åpnet påmelding ({event.title}): {SITE_PATH}{event.id}/"
+                    )
+
+                # Something bad happened
+                except Exception as e:
+                    logging.warning(
+                        f"Somethng unexpected happened while notifying users of newly opened events: '{e}'"
+                    )
+                    return False
+
                 logging.debug(
-                    f"Messaged user {user} about newly opened {event.status} event"
+                    f"Messaged user {user} about newly added {event.status} event"
                 )
-                await user.send(
-                    f"Nytt event åpnet påmelding ({event.title}): {SITE_PATH}{event.id}/"
-                )
+
+        # Loop ran wihout problem
+        return True
 
 
 # Initialized client
@@ -148,28 +230,18 @@ async def on_message(message: discord.Message):
         await message.reply("Bruker fjernet")
 
 
-def update():
-    """
-    Checks for new events and saves an updated register to file.
-    The method mutates result instead of giving a return value.
-    This is because the method is designed to be run with the threading module.
-    """
-    old = EventRecord.from_json(DATA_PATH)
-
-    new = EventRecord.get_updated(API_ENDPOINT)
-
-    EventRecord.combine(old, new).save_to_json(DATA_PATH)
-
-    newly_opened = EventRecord.get_newly_opened_events(old, new)
-    new_events = EventRecord.get_new_events(old, new)
-
-    logging.info("Fetched update")
-    return newly_opened, new_events
-
-
 if __name__ == "__main__":
     from dotenv import load_dotenv
     from os import environ
+
+    # To remove RuntimeError on exit on windows as documented in this issue:
+    # https://github.com/encode/httpx/issues/914
+    if (
+        sys.version_info[0] == 3
+        and sys.version_info[1] >= 8
+        and sys.platform.startswith("win")
+    ):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     load_dotenv()
 
@@ -183,4 +255,3 @@ if __name__ == "__main__":
 
     BOT_TOKEN = environ["BOT_TOKEN"]
     client.run(BOT_TOKEN)
-    asyncio.create_task(client.main_loop())
