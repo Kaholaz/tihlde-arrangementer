@@ -1,3 +1,4 @@
+from _typeshed import NoneType
 import asyncio
 import datetime
 import sys
@@ -24,23 +25,35 @@ class Event:
         """
         Creates a new Event given a set of parameters
         """
+
+        # Sets fields to the input values and converts iso-strings to datetime
         self.id = id
         self.title = title
-        self.start = datetime.datetime.fromisoformat(start)
-        self.end = datetime.datetime.fromisoformat(end)
-        self.deadline = datetime.datetime.fromisoformat(deadline)
-        self.signup_start = datetime.datetime.fromisoformat(signup_start)
+        self.start = None if start is None else datetime.datetime.fromisoformat(start)
+        self.end = None if end is None else datetime.datetime.fromisoformat(end)
+        self.deadline = (
+            None if deadline is None else datetime.datetime.fromisoformat(deadline)
+        )
+        self.signup_start = (
+            None
+            if signup_start is None
+            else datetime.datetime.fromisoformat(signup_start)
+        )
         self.place = place
         self.status = status
 
     def to_json(self) -> dict:
         """Returns a dict representation of an event"""
         logging.debug(f"Convertet event with id: {self.id}, to dict")
+
+        # Copies dict so to not make changes to the object (mutable)
         result_json = self.__dict__.copy()
+
+        # Converts all date fields to a string representation
         for key, value in result_json.items():
-            # Converts all date fields to a string representation
             if type(value) == datetime.datetime:
                 result_json[key] = value.isoformat()
+
         return result_json
 
     @classmethod
@@ -97,22 +110,23 @@ class Event:
         return event
 
     def copy(self) -> "Event":
+        """Returns a copy of the instance of `Event`"""
         logging.debug(f"Copied event with id: {self.id}")
         return self.__class__(**self.to_json())
+
+    def __eq__(self, other: "Event"):
+        return all(
+            self.__dict__[key] == other.__dict__[key] for key in self.__dict__.keys()
+        )
 
     def __repr__(self):
         logging.debug(f"Returned string representation of event with id: {self.id}")
 
-        # Copies dict to no make changes to the object (mutable)
-        result_dict = self.__dict__.copy()
-
-        # Datetimes converted into equivalent iso-formatted strings
-        for key, value in result_dict.items():
-            if type(value) == datetime.datetime:
-                result_dict[key] = value.isoformat()
+        # Gets the json repr of the class (all strings instead of datetime fields)
+        dic = self.to_json()
 
         # Formatted as you would call the function
-        return f"{type(self).__name__}({', '.join(f'{key}={value}' for key, value in result_dict.items())})"
+        return f"{type(self).__name__}({', '.join(f'{key}={value}' for key, value in dic.items())})"
 
 
 if __name__ == "__main__":

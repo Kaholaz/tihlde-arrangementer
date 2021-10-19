@@ -42,9 +42,14 @@ class EventRecord:
         return self.eventrecord[id]
 
     def __str__(self):
+        """
+        Returns a string repr of the instanse for mated as the string repr
+        of each event separated by newline
+        """
         return "\n".join(str(event) for event in self.eventrecord.values())
 
     def __len__(self):
+        """Returns the number of events held in the eventrecord"""
         return len(self.eventrecord)
 
     @classmethod
@@ -55,9 +60,13 @@ class EventRecord:
         url = API_ENDPOINT
 
         async with aiohttp.ClientSession() as session:
+
+            # Gets all the events from the api
             events_json = await fetch_json(session, url)
 
             result = cls()
+            # Tries to retrive the ids of the events and then finds each event
+            # given the id.
             try:
                 results: dict[str, any] = events_json["results"]
                 event_ids: list[int] = [event["id"] for event in results]
@@ -71,7 +80,8 @@ class EventRecord:
             # Bad JSON
             except KeyError as e:
                 logging.critical(
-                    f"Something was from with the json returned from the request [url: {url}]. KeyError: '{e}'"
+                    f"Something was from with the json returned from the "
+                    f"request [url: {url}]. KeyError: '{e}'"
                 )
                 raise e
 
@@ -86,11 +96,17 @@ class EventRecord:
         result = cls()
 
         try:
+            # Gets a list of JSON represented events.
             async with aiofiles.open(path, mode="r", encoding="utf8") as f:
                 raw = await f.read()
             data = json.loads(raw)
+
+            # Unpacks the kwargs from the json.
             for entry in data:
                 result.add_event(Event(**entry))
+
+        # The resulting EventRecord stays empty if file is not found
+        # (empty EventRecord is then returned)
         except FileNotFoundError:
             logging.warning(f"File not found: {path}")
 
@@ -101,8 +117,10 @@ class EventRecord:
         eventrecord1: "EventRecord", eventrecord2: "EventRecord"
     ) -> set[int]:
         """
-        Gets the ids that are comon between two `EventRecord` instances
+        Gets the ids that are common between two `EventRecord` instances
         """
+
+        # Returns the intersection between the id in each EventRecord
         return set(eventrecord1.eventrecord.keys()) & set(
             eventrecord2.eventrecord.keys()
         )
@@ -119,6 +137,7 @@ class EventRecord:
 
         shared_ids = cls.shared_ids(old, new)
 
+        # Checks common ids for changes
         newly_opened = cls()
         for id in shared_ids:
             # If the event switched from anything but "ACTIVE" to "ACTIVE"
@@ -141,7 +160,7 @@ class EventRecord:
 
         result = cls()
 
-        # All ids in new, but not in old
+        # All ids in new, but not in old (unique to new)
         new_ids = [id for id in new.eventrecord.keys() if id not in shared_ids]
         for id in new_ids:
             result.add_event(new.get_event(id).copy())
@@ -166,7 +185,7 @@ class EventRecord:
                 event.status = "EXPIRED"
                 combined.add_event(event)
 
-        # All events in new added as is
+        # All events in new added as-is
         for event in new.eventrecord.values():
             combined.add_event(event.copy())
 
