@@ -74,7 +74,7 @@ class Client(discord.Client):
 
             if self.everyone_notified:
                 # Save the new EventRecord
-                EventRecord.combine(old, new).save_to_json(DATA_PATH)
+                await EventRecord.combine(old, new).save_to_json(DATA_PATH)
 
                 await asyncio.sleep(QUERY_INTERVAL - (time.time() - t0))
             else:
