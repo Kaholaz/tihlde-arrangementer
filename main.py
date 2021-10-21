@@ -32,7 +32,13 @@ class Client(discord.Client):
             # Updates the records if everyone is up to speed with the current updates
             if self.everyone_notified:
                 t0 = time.time()
-                newly_opened, new_events = await self.update()
+
+                # Fetch the saved verion from file and an updated version from the api
+                new, old = await self.get_new_and_old()
+
+                newly_opened = EventRecord.get_newly_opened_events(old, new)
+                new_events = EventRecord.get_new_events(old, new)
+                new_sign_up_start = EventRecord.get_new_signup_start(old, new)
 
             # Self.everyone_notified gets set to False if new events are discovered
             if len(newly_opened) != 0:
@@ -45,42 +51,45 @@ class Client(discord.Client):
                 self.everyone_notified = False
                 logging.info(f"New events: {list(new_events.eventrecord.keys())}")
 
+            if len(new_sign_up_start) != 0:
+                self.everyone_notified = False
+                logging.info(
+                    f"Newly changed sign-up start :{list(new_sign_up_start.eventrecord.keys())}"
+                )
+
             # Notifies users if everyone is not up to speed
             if not self.everyone_notified:
                 result_new = await client.notify_users_new(new_events)
                 result_newly_opened = await client.notify_users_newly_opened(
                     newly_opened
                 )
+                result_new_signup_start = await client.notify_users_new_sign_up_start(
+                    new_sign_up_start
+                )
 
-                # Sets self.everyone_notified to True if both functions ran without issue
-                self.everyone_notified = result_new and result_newly_opened
+                # Sets self.everyone_notified to True if all functions ran without issue
+                self.everyone_notified = all(
+                    (result_new, result_newly_opened, result_new_signup_start)
+                )
 
             if self.everyone_notified:
+                # Save the new EventRecord
+                EventRecord.combine(old, new).save_to_json(DATA_PATH)
+
                 await asyncio.sleep(QUERY_INTERVAL - (time.time() - t0))
             else:
                 # Waits 500ms before retrying
                 await asyncio.time.sleep(0.5)
 
-    async def update(self):
+    async def get_new_and_old(self) -> tuple[EventRecord, EventRecord]:
         """
-        Checks for new events and saves an updated register to file.
-        The method mutates result instead of giving a return value.
-        This is because the method is designed to be run with the threading module.
-
-        Returns a tuple with EventRecord where the first entry is newly opened events
-        and the second entry is new events
+        Gets an old EventRecord from disk, and a new EventRecord from the API
         """
-        old = await EventRecord.from_json(DATA_PATH)
-
         new = await EventRecord.get_updated()
+        old = await EventRecord.from_json(DATA_PATH)
+        logging.info("Fetched a new EventRecord")
 
-        newly_opened = EventRecord.get_newly_opened_events(old, new)
-        new_events = EventRecord.get_new_events(old, new)
-
-        await EventRecord.combine(old, new).save_to_json(DATA_PATH)
-
-        logging.info("Fetched update")
-        return newly_opened, new_events
+        return new, old
 
     async def load_end_users(self, path: str) -> set[int]:
         """
@@ -191,6 +200,32 @@ class Client(discord.Client):
                 except Exception as e:
                     logging.warning(
                         f"Somethng unexpected happened while notifying users of newly opened events: '{e}'"
+                    )
+                    return False
+
+                logging.debug(
+                    f"Messaged user {user} about newly added {event.status} event"
+                )
+
+        # Loop ran wihout problem
+        return True
+
+    async def notify_users_new_sign_up_start(self, new_events: EventRecord) -> bool:
+        """
+        Sends a message to every registered user with newly opened events.
+        """
+        for user in self.end_users:
+            for event in new_events.eventrecord.values():
+                try:
+                    await user.send(
+                        f"Et event endret når påmeldingen åpner ({event.title}): {SITE_PATH}{event.id}/"
+                        f"Arrangementet åpner nå påmeldingen {event.signup_start}"
+                    )
+
+                # Something bad happened
+                except Exception as e:
+                    logging.warning(
+                        f"Somethng unexpected happened while notifying users of newly changed events: '{e}'"
                     )
                     return False
 

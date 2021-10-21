@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sys
+from types import ClassMethodDescriptorType
 import aiohttp
 import json
 import aiofiles
@@ -166,6 +167,22 @@ class EventRecord:
             result.add_event(new.get_event(id).copy())
 
         logging.debug(f"Found {len(result)} new events")
+        return result
+
+    @classmethod
+    def get_new_signup_start(
+        cls, old: "EventRecord", new: "EventRecord"
+    ) -> "EventRecord":
+        """
+        Returns a new `EventRecord` that contains all the events
+        in new where the sign up start changed
+        """
+        shared_ids = cls.shared_ids(old, new)
+
+        result = cls()
+        for id in shared_ids:
+            if old.get_event(id).signup_start != new.get_event(id).signup_start:
+                result.add_event(new.get_event(id).copy())
         return result
 
     @classmethod
