@@ -32,9 +32,14 @@ class Client(discord.Client):
             # Updates the records if everyone is up to speed with the current updates
             if self.everyone_notified:
                 t0 = time.time()
-
-                # Fetch the saved verion from file and an updated version from the api
-                new, old = await self.get_new_and_old()
+                try:
+                    # Fetch the saved verion from file and an updated version from the api
+                    new, old = await self.get_new_and_old()
+                except Exception as e:
+                    logging.warning(
+                        f"Exception '{e}' caught when retriving new EventRecord"
+                    )
+                    continue
 
                 newly_opened = EventRecord.get_newly_opened_events(old, new)
                 new_events = EventRecord.get_new_events(old, new)
